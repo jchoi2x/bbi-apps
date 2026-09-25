@@ -10,12 +10,35 @@ cd "$REPO_ROOT"
 
 export PATH="$HOME/.bun/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
 
-echo "== Resolve git submodules over token HTTPS =="
-# .gitmodules pins git@github.com: SSH URLs; the Cloud Agent authenticates over
-# HTTPS with a scoped token, so rewrite SSH GitHub URLs to HTTPS for this run.
-git config --global url."https://github.com/".insteadOf "git@github.com:"
+echo "== Resolve git submodules =="
+# .gitmodules pins git@github.com: SSH URLs, but the Cloud Agent authenticates
+# to GitHub over HTTPS with a scoped token. Reuse the credential already
+# embedded in the origin remote (or gh's token) to rewrite GitHub URLs to
+# authenticated HTTPS. Passed via `git -c` so the token is NOT persisted into
+# git config or the environment snapshot.
+auth_args=()
+origin_url="$(git config --get remote.origin.url || true)"
+cred=""
+if [[ "$origin_url" =~ ^https://([^/@]+)@github.com/ ]]; then
+  cred="${BASH_REMATCH[1]}"
+  echo "   using credential embedded in origin remote"
+elif command -v gh >/dev/null 2>&1 && tok="$(gh auth token 2>/dev/null)" && [ -n "$tok" ]; then
+  cred="x-access-token:${tok}"
+  echo "   using gh auth token"
+fi
+if [ -n "$cred" ]; then
+  prefix="https://${cred}@github.com/"
+  auth_args=(-c "url.${prefix}.insteadOf=git@github.com:" -c "url.${prefix}.insteadOf=https://github.com/")
+else
+  echo "   WARNING: no GitHub credential found; relying on existing git config"
+fi
+
 git submodule sync --recursive
-git submodule update --init --recursive
+if [ "${#auth_args[@]}" -gt 0 ]; then
+  git "${auth_args[@]}" submodule update --init --recursive
+else
+  git submodule update --init --recursive
+fi
 
 echo "== bbi-sst (Bun / TypeScript) =="
 ( cd projects/bbi-sst && bun install )
