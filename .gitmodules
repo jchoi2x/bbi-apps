@@ -4,3 +4,9 @@
 [submodule "projects/bbi-cron-php"]
 	path = projects/bbi-cron-php
 	url = git@github.com:jchoi2x/bbi-cron-php.git
+[submodule "projects/bbi-sst"]
+	path = projects/bbi-sst
+	url = git@github.com:jchoi2x/bbi-sst.git
+[submodule "projects/bbi-tf"]
+	path = projects/bbi-tf
+	url = git@github.com:jchoi2x/bbi-tf.git
