@@ -1,0 +1,54 @@
+---
+description: Global context routing matrix for bbi-apps workspace
+globs: *
+alwaysApply: true
+---
+
+# Workspace Context Routing Table
+
+Before generating, editing, or refactoring code, locate the file path in the table below. Read the **Primary Context Doc** (and related docs when the change crosses a contract). Prefer `docs/` over missing or stale `docs/projects/` stubs. Live hosts and PHP 5.6 constraints: `.cursor/rules/00-system-overview.mdc`.
+
+Canonical index: `docs/README.md`. One-page map: `docs/ecosystem.md`.
+
+| If you are touching files in... | Primary Context Doc | Related Architecture Docs | Environment / Critical Constraints |
+| :--- | :--- | :--- | :--- |
+| `projects/nwk1/system.bbimarketing.com/new/**` | `docs/projects/bbi-nwk1-new.md` | `docs/employee-use-cases.md`, `docs/api-directory.md`, `docs/coverage-matrix.md` | **nwk1 SSH `/var/www`**. AdminLTE `/new` CRM. Polling widgets still cURL **Apollo** `pollingStatus` / `pollingList`, not SST. Session cookie `sysData` on `.bbimarketing.com`. |
+| `projects/nwk1/system.bbimarketing.com/sys/**` | `docs/bbi-sst.md` | `docs/projects/bbi-nwk1-new.md`, `docs/coverage-matrix.md` | SST overlay: Workflow Runs + Stores against API Gateway. Same `sysData` login. Unknown `?p=` 302s to `/new`. |
+| `projects/nwk1/system.bbimarketing.com/**` | `docs/projects/bbi-nwk1-legacy.md` | `docs/system-topology.md`, `docs/applications.md` | Legacy PHP 5.6 site root. Do not break `/new` / `/sys` session cookies. |
+| `projects/bbi-dashboard/**` | `docs/projects/bbi-nwk1-new.md` | `docs/employee-use-cases.md`, `docs/email-reports.md` | Git checkout of `/new` (related to live nwk1 tree; not proven identical HEAD). |
+| `projects/apollo/**` | `docs/projects/apollo.md` | `docs/legacy-system.md`, `docs/data-pipeline.md`, `docs/api-directory.md` | **Remote SSH**. Domino’s VPN (`tun0`) for Pulse `:59101`. Host of `vpn.bbimarketing.com` and weekly PHP ETL. Live crontab is in `docs/projects/apollo.md`. |
+| `projects/bbi-cron-php/**` | `docs/legacy-system.md` | `docs/projects/apollo.md`, `docs/data-pipeline.md` | Git history of Apollo Pulse scripts (`polling.php`, `pollingProcessing.php`, NLL/ROI). Treat as twin of `projects/apollo/services/` + `v2/`. |
+| `projects/bbi-sst/**` | `docs/projects/bbi-sst.md` | `docs/bbi-sst.md`, `docs/data-pipeline.md`, `docs/coverage-matrix.md`, `projects/bbi-sst/docs/how-it-works.md` | **AWS SST Ion**. Daily download → ingest → AccuZIP → optional NLL. NLL TSV column order is a vendor contract. RAW epochs are ET wall-clock. `/new` polling UI is still Apollo unless you are editing `/sys`. |
+| `projects/bbi-accuzip-api/**` | `docs/data-pipeline.md` | `docs/bbi-sst.md`, `docs/system-topology.md`, `.cursor/rules/04-file-storage-accuzip.mdc` | **NAS dependent**. Production path is SQS FIFO + `WaitForTaskToken`, not HTTP `POST /exports`. Output suffix `_valid.txt`. |
+| `projects/bbi-tf/**` | `docs/system-topology.md` | `docs/api-directory.md`, `docs/infrastructure.md` | Cloudflare DNS/Workers. `workers/upload-proxy.js` → SST `POST /upload`: **forward body + Basic Auth; no 308**. |
+| `docs/**` | `docs/README.md` | `docs/ecosystem.md`, `docs/coverage-matrix.md` | Keep synchronized when HTTP contracts, NLL TSV columns, or host/VPN paths change. |
+
+---
+
+## Agent Routing Instructions
+
+1. **Check system boundaries**
+   - `nwk1` and `apollo` are **remote SSH servers**, not local runtimes.
+   - Public `*.bbimarketing.com` vs Tampa `192.168.4.0/24` vs Domino’s GLS `10.x`/`100.x` vs WireGuard `10.14.0.0`.
+   - Vocelli / non-numeric stores go to **Athena** (`192.168.4.24`), not Apollo MassMail.
+
+2. **Verify cross-project contracts**
+   - Changing SST Step Functions, ingest keys, or NLL TSV: check `/new` consumers and `/sys` (`docs/employee-use-cases.md`, `docs/coverage-matrix.md`).
+   - Changing Apollo `v2/` JSON or `cli/process.php` formTypes: check `docs/api-directory.md` and nwk1 `/new` cURL/ajax callers.
+   - Changing nwk1 `pollingInfoRequest` / `nllProvider`: both Apollo kickoff **and** SST `FetchStores` depend on it.
+
+3. **SST vs CRM**
+   - `bbi-sst` replaces the Pulse **data engine** (download, ingest, AccuZIP, NLL generate). It does **not** replace hotel calling, art, shipping, invoices, or mail-job metadata (`docs/overview.md`).
+   - ROI email, `dataSelector`, `databaseExporter`, and blacklist are **not ported** (`docs/coverage-matrix.md`). Do not delete Apollo paths those screens still call.
+
+4. **Secrets**
+   - API tokens are hardcoded in PHP / SST SSM. Do not copy DB or CIFS passwords from `db.inc` / `fstab` into new files or docs.
+
+Technical rules (prefer over outdated specs under `docs/superpowers/`):
+
+- Topology: `.cursor/rules/00-system-overview.mdc`
+- HTTP contracts: `.cursor/rules/01-api-contracts.mdc`
+- Legacy weekly ETL: `.cursor/rules/02-etl-state-machine.mdc`
+- Schema: `.cursor/rules/03-database-schema.mdc`
+- AccuZIP files: `.cursor/rules/04-file-storage-accuzip.mdc`
+- SST mapping: `.cursor/rules/05-modernization-mapping.mdc`

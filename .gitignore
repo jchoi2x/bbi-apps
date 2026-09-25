@@ -1,0 +1,108 @@
+# ==============================================================================
+# OS & Editor Files
+# ==============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# IDE & Editor configurations
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+
+# ==============================================================================
+# Environment & Secrets (Never commit credentials)
+# ==============================================================================
+.env
+.env.*
+!.env.example
+!.env.template
+!.env.test
+
+# ==============================================================================
+# Node.js & Monorepo Build Artifacts
+# ==============================================================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+.nuxt/
+.astro/
+.cache/
+*.tsbuildinfo
+
+# Coverage & testing
+coverage/
+.nyc_output/
+.turbo/
+.nx/cache/
+
+# ==============================================================================
+# SST (Serverless Stack / Ion) & Cloud Infrastructure
+# ==============================================================================
+.sst/
+.open-next/
+.build/
+cdk.out/
+cdk.context.json
+
+# Serverless Framework artifacts (if applicable)
+.serverless/
+
+# ==============================================================================
+# PHP & Composer
+# ==============================================================================
+vendor/
+composer.phar
+
+# Composer lock files are usually committed in root apps, but if ignored in packages:
+# composer.lock
+
+# PHPUnit & Testing
+.phpunit.result.cache
+.phpunit.cache/
+.php-cs-fixer.cache
+phpunit.xml
+!phpunit.xml.dist
+
+# Common PHP Framework Artifacts (Laravel / Symfony)
+storage/*.key
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/logs/*
+var/cache/
+var/log/
+var/sessions/
+
+# ==============================================================================
+# Logs, Temporary Files & Dumps
+# ==============================================================================
+*.log
+*.tmp
+*.temp
+*.bak
+*.sql
+*.sqlite

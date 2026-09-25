@@ -1,0 +1,144 @@
+---
+description: Data dictionary for nwk1 bbi_system and apollo dominos (polling, RAW, NLL, mailing_addresses)
+globs: projects/nwk1/**/*.php,projects/apollo/**/*.php,projects/bbi-sst/migrations/**,projects/bbi-sst/docs/queries/**
+alwaysApply: false
+---
+
+# Database schema (nwk1 + apollo + SST port)
+
+No in-repo `CREATE TABLE` for nwk1 `company`/`locations` — columns reconstructed from PHP. Apollo ETL types from SST Postgres port of MySQL dumps: `projects/bbi-sst/migrations/20260709120000_001_legacy_apollo_tables.ts`.
+
+| Engine | Host | Database |
+|---|---|---|
+| MySQL/MariaDB | nwk1 `127.0.0.1:3306` | `bbi_system` (`new/config/db.inc`) |
+| MySQL | apollo `127.0.0.1:3306` (`:13306` on LAN) | `dominos` (`pulse_fetch/core/config.inc`) |
+| Postgres | AWS RDS (SST) | port of apollo tables + `mailing_addresses` |
+
+Do not copy DB passwords from `db.inc` / `config.inc`.
+
+## Correlations
+
+```
+bbi_system.company.id  ←  locations.loc_comp_id
+locations.location_number  ↔  daily_polling.store_number
+                           ↔  MassMail_RAW.store_number
+                           ↔  OR2_Raw.Location_Code
+polling_processes.(fid,lid)  =  daily_polling.id range
+MassMail_RAW.(store_number, CustomerProfileID, Street)
+        ↔  mailing_addresses.(store_number, pulse_profile_id, old_address)   [SST]
+NewCustomers.late_matched  ↔  LateCustomers.new_matched
+```
+
+**`company.rd_available`:** `0` pending data-release; `1` Domino’s Pulse; `2` alternate; `3` Vocelli (`client.inc`, `api/index.php:694`, `vocelli_direct_mail.php`).
+
+Polling seed (`new/api/index.php:694-721`): `rd_available='1'` + location `vpn_ip_address IS NOT NULL`.
+
+---
+
+## nwk1 `company`
+
+PK `id`. Used columns: `franchisee_name`, address/phone/email fields, `sr_id`, `ac_id`, `product_array`, `rd_available`, `company_active`, `company_hotel_active`, `poll_username`, `poll_password`, `access_hash`, `fcode`, notes/shipping/Coke fields (`updater.php`, `ajax.php`, `api/index.php`).
+
+## nwk1 `locations`
+
+Natural key `location_number`. `real_location_number` for POS vs mail ID. `loc_comp_id` → `company.id`. Pulse: `vpn_ip_address`, `vpn_custom_user`, `vpn_custom_password`. NLL flags: `location_new`, `location_late`, `location_lapsed`. Freq window: `location_freq_start`/`location_freq_stop`. Geo: `location_lat`/`lng`.
+
+NLL settings live in `nll_settings` (joined in `nllProvider.inc:14` by `store_number`).
+
+---
+
+## apollo `daily_polling`
+
+Port `001:253-266`. Apollo PHP columns:
+
+| Column | Meaning |
+|---|---|
+| `id` | PK; thread ranges |
+| `store_number`, `client_name`, `vpn_ip_address`, `username`, `password` | From nwk1 API (`polling.php:30`) |
+| `success` | `0` pending, `1` ok, `2` fail |
+| `success_time` | unix |
+| `fail_reason` | credentials / GLS / download |
+
+TRUNCATE each Sunday (`polling.php:7`). SST adds `status`, `polling_watchdog_id`, UK `(watchdog_id, store_number)`, `message`, `data_source`.
+
+## apollo `polling_watchdog`
+
+Port `001:367-388`. See `02-etl-state-machine.mdc` for flag transitions.
+
+| Column | Type (port) |
+|---|---|
+| `id`, `start_time`, `end_time` | bigint unix; `end_time` empty until NLL ROI done |
+| `process_lock` | mutex |
+| `polling`, `insert_new/late/massmail/or2`, `extract_*`, `parse_*`, `scan_lapsed`, `nll_generated`, `frequent_generated`, `update_mail_roi`, `update_nll_roi` | 0/1 |
+
+SST adds `status`, `sfn_execution_arn`, report window, store counters.
+
+## apollo `polling_processes`
+
+Port `001:358-364`: `fid`, `lid`, `last_activity`, `completed`. TRUNCATE each run (`polling.php:6`). Heartbeat/complete: `functions.inc:307,320`. **SST does not use this for orchestration.**
+
+## apollo `file_list`
+
+Port `001:324-336`. UK `(store_number, filename)`.
+
+| Column | Apollo | SST extra |
+|---|---|---|
+| `dir` | `EOutbox`/`EArchive` | often unused |
+| `t_read` | unix | |
+| `status` | `1` downloaded, `2` fail | `1` = downloaded |
+| `fail_reason` | | |
+| `s3_path` | unused | S3 key |
+| `ingested` / `legacy_ingested` | — | false until ingest Map |
+
+Insert: `functions.inc:306-309`. Skip if `COUNT(*) WHERE filename=…` (`:302`).
+
+---
+
+## `MassMail_RAW`
+
+Port `001:111-141`. INSERT IGNORE `insertFiles.inc:76`. Skip empty Street (`:82`). Dates via `strtotime` of Pulse tab fields (`:83-86`) — **ET wall-clock epochs**, not UTC (`bbi-sst/docs/how-it-works.md`).
+
+Key columns: `store_number`, `phone`, `CustomerName`, `Street/City/State/Zip`, `FirstOrderDate`, `LastOrderDate`, `LastLateOrderDate`, `LastDeliveryTime`, `CustomerProfileID`, offer/lifetime fields, `Version`.
+
+Index `MassMail_RAW_extract` `(store_number, LastOrderDate, FirstOrderDate, LastLateOrderDate)` (`001:142`). SST UK `(store_number, CustomerProfileID, LastOrderDate, filename)` + required `filename`.
+
+## `OR2_Raw`
+
+Port `001:188+`. PK `(Location_Code, Order_Number, Actual_Order_Date)`. INSERT IGNORE `insertFiles.inc:14`. Keep `Order_Status_Code == 4` only (`:20`).
+
+## Campaign tables (legacy materialization)
+
+Written **after** AccuZIP parse, not at ingest.
+
+**`NewCustomers`** (`001:161`, `parseFiles.inc:75`): `store_number`, postal + `old_*`, `last_order`, `customer_code`, later `mailed`, `late_matched`, ROI fields.
+
+**`LateCustomers`**: same shape; `new_matched` (`parseFiles.inc:200`).
+
+**`LapsedCustomers`**: insert in `generate_nll.php:733` (`lapsed_counter`, `mailed_date`, `mailed_state`).
+
+SST NLL **does not** write these as the ingest path; procedures join RAW ⨝ `mailing_addresses` (`05-modernization-mapping.mdc`).
+
+---
+
+## SST `mailing_addresses`
+
+`migrations/20260709120200_003_nll_domain_tables.ts:19-49` + `is_invalid` (migration 012).
+
+| Column | Role |
+|---|---|
+| `old_address/city/state/zip` | MMC identity (`MassMail_RAW.Street/City/State/Zip`) |
+| `pulse_profile_id` | `CustomerProfileID` text |
+| `address, city, state, zip5, zip4, crrt` | post-AccuZIP |
+| `is_valid` | 1 after successful apply |
+| `is_invalid` | AccuZIP hard-fail; never downgrade a valid row |
+
+UK `(store_number, pulse_profile_id, old_address, old_city, old_state, old_zip)`. Ingest insert-ignore; AccuZIP apply owns updates.
+
+---
+
+## Seed path
+
+1. nwk1 `company` + `locations` → POST `pollingInfoRequest`
+2. apollo `daily_polling` → NTLM download → `file_list` + `OrderData/` + `MailData/`
+3. `insertFiles` → `OR2_Raw` / `MassMail_RAW`
+4. AccuZIP → `NewCustomers` / `LateCustomers` / MassMail parse → `scan_lapsed` → NLL → `LapsedCustomers`

@@ -1,0 +1,138 @@
+---
+description: Weekly Pulse polling state machine (polling.php, threads, watchdog flags, 6-minute tick)
+globs: projects/apollo/services/pulse_fetch/**,projects/apollo/services/dominos/**,projects/apollo/v2/**,projects/bbi-cron-php/**
+alwaysApply: false
+---
+
+# ETL state machine (legacy Apollo weekly poll)
+
+Canonical scripts (on-host `/var/www/…`, mirrored under `projects/apollo/`):
+
+| File | Role |
+|---|---|
+| `services/pulse_fetch/core/polling.php` | Sunday kickoff |
+| `services/pulse_fetch/core/pollingThread.php` | Per-range worker |
+| `services/pulse_fetch/core/functions.inc` | `PulseConnection`, `runChildPolling()` |
+| `services/pulse_fetch/core/pollingProcessing.php` | 6-minute state machine |
+| `insertFiles.inc` / `extractFiles.inc` / `parseFiles.inc` | Insert / AccuZIP extract / parse |
+| `services/dominos/generate_nll.php` | NLL press file |
+| `v2/customProjects/weeklyMailROI.php`, `nllROIReporter.php` | ROI emails |
+
+DB: apollo MySQL `dominos` (`core/config.inc`). Timezone in the processor: `America/New_York`.
+
+## Schedule
+
+User crontab on apollo (Eastern, 2026-09-19). Not in `/etc/cron.d`. Full table: `docs/projects/apollo.md`.
+
+| Job | When | Evidence |
+|---|---|---|
+| `polling.php` | **Sunday 16:00 ET** (`0 16 * * 0`) | Live crontab |
+| `pollingProcessing.php` | Every **6 minutes** (`*/6 * * * *`). This 360s tick **is** the AccuZIP wait loop (`file_exists`), not a sleep inside AccuZIP. | Live crontab |
+| `key_index.php` | Mon–Fri 15:45 (`45 15 * * 1-5`) | Live crontab; hotel-key PDF index, not Pulse ETL |
+| `mediaMixModelCron.php` | Daily 11:00 (`0 11 * * *`) | Live crontab; Domino’s media-mix SFTP |
+
+No CLI args. PHP5: `/usr/bin/php5 …/pollingThread.php <firstID> <lastID>`.
+
+## Kickoff — `polling.php`
+
+```
+TRUNCATE polling_processes; TRUNCATE daily_polling;          (:6-7)
+POST nwk1 /new/api/  type=pollingInfoRequest                 (:10-26)
+INSERT daily_polling (store_number, client_name, vpn_ip, user, pass)  (:29-31)
+GROUP BY password; if (lastID-firstID >= 50) split mid; spawn threads (:34-51)
+INSERT polling_watchdog (start_time)                         (:54)
+```
+
+Chunking is **not** “50 stores” as a fixed batch: it groups by franchisee **password**, then splits the `daily_polling.id` span in half when `idTotal >= 50` (`:40-45`). `sleep(2)` between groups.
+
+## Threads — `pollingThread.php` + `runChildPolling`
+
+`pollingThread.php` retries PDO 3× then `runChildPolling($argv[1], $argv[2], …)` (`:7-12`).
+
+`runChildPolling` (`functions.inc:249-320`):
+
+1. Rows with `id` in `[fid,lid]` and `success='0'`.
+2. NTLM GET `http://{vpn_ip}:59101/PulseWeb/EOutbox/` (then EArchive if ≥10 missing outbox OR2s — `:301`).
+3. Keep `OR2_*.tab` → `OrderData/`, `mmc_*.tab` → `MailData/` (`:277`). `mnc_`/`mlc_` commented out.
+4. Skip filename already in `file_list`. Else download; `file_list.status` `1` ok / `2` fail (`:306-309`). Heartbeat `polling_processes.last_activity`.
+5. HTTP `401` → `daily_polling.success=2` `'Bad credentials, contact Pulse'`; curl exception → `'999'` → `'Unable to connect, store offline or GLS issue'` (`:273`).
+6. Store success → `success=1`, `success_time=UNIX_TIMESTAMP`. Range done → `polling_processes.completed=1` (`:320`).
+
+Stale recovery (`pollingProcessing.php:34-41`): if `polling==0` and threads still listed in `ps`, any `polling_processes` with `completed=0` and `last_activity < now-1800` is `pkill`’d and respawned.
+
+`process_lock` on `polling_watchdog` prevents overlapping processing ticks (`:13-15`, set 1 around each include).
+
+## Watchdog flags
+
+Latest row = current run (`ORDER BY id DESC LIMIT 1`). Insert only sets `start_time`; flags default 0.
+
+| Flag | Set when | File:line |
+|---|---|---|
+| `start_time` | Kickoff | `polling.php:54` |
+| `process_lock` | Mutex around stages | `pollingProcessing.php` |
+| `polling=1` | No `pollingThread.php` PIDs; **before** insert | `:28` then include `insertFiles.inc` |
+| `insert_or2` | All `OR2_*.tab` ingested (`Order_Status_Code==4` only), files unlinked | `insertFiles.inc:65` |
+| `insert_new`, `insert_late`, `insert_massmail` | All `mmc_*.tab` ingested (skip empty Street) | `insertFiles.inc:133` (all three together) |
+| `extract_new` / `extract_late` / `extract_massmail` | CSV written to `mail_data/postal_validate/` | `extractFiles.inc:49,141,175` |
+| `parse_new` / `parse_late` / `parse_massmail` | AccuZIP `*_valid.txt` ingested | `parseFiles.inc:131,210,339` |
+| `scan_lapsed` | Lapsed scan (`$parseFiles==4`) | `parseFiles.inc:439` |
+| `nll_generated` | After `generate_nll.php` | `pollingProcessing.php:92` |
+| `frequent_generated` | **Stub** — no `generate_frequent.php`; flag set immediately | `:99` |
+| `update_mail_roi` | After `weeklyMailROI.php` | `:103` |
+| `update_nll_roi` + `end_time` + `process_lock=1` | After `nllROIReporter.php` (terminal) | `:107` |
+
+Extract/parse week window (`pollingProcessing.php:4-7`, same in `extractFiles.inc`):
+
+```php
+$previous_week = strtotime("-1 week +1 day");
+$beginning = strtotime("last sunday midnight", $previous_week);
+$end = strtotime("next saturday 11:59:59 pm", $beginning);
+```
+
+## `pollingProcessing.php` gates
+
+```
+end_time set OR process_lock=1     → exit
+polling==0
+  no thread PIDs → lock, polling=1, insertFiles, unlock, exit
+  PIDs exist     → revive stale >30min threads, exit
+polling==1 AND all insert_*==1 AND all extract_*==0
+  → extractFiles.inc
+all extract_*==1
+  → $parseFiles ladder:
+     1 newcustomer_valid.txt && parse_new==0
+     2 latecustomer_valid.txt && parse_new==1 && parse_late==0
+     3 massmail_valid.txt && new+late parsed
+     4 all parsed && scan_lapsed==0
+     5 … && nll_generated==0        → generate_nll.php
+     6 … && frequent_generated==0   → stub flag=1
+     7 … && update_mail_roi==0      → weeklyMailROI.php
+     8 … && update_nll_roi==0       → nllROIReporter.php (sets end_time)
+```
+
+UI percents (`v2/index.php:12-34`): while `polling==0`, `status = round(completed_processes/total * 40)`. Then 40→100 by flag. Labels are slightly out of sync with real work (e.g. `insert_or2` still shows “Validating Addresses”).
+
+## AccuZIP handshake (legacy)
+
+`extractFiles.inc` writes:
+
+- `postal_validate/NewCustomer_Export.csv`
+- `postal_validate/LateCustomer_Export.csv`
+- `postal_validate/MassMail_Export.csv`
+
+AccuZIP VM drops into `postal_data/` (via symlink `mail_data` → `/media/mail-data-accuzip`):
+
+- `newcustomer_valid.txt` / `latecustomer_valid.txt` / `massmail_valid.txt`
+
+Each 6-minute tick `file_exists` those paths (`pollingProcessing.php:67-72`). See `04-file-storage-accuzip.mdc`.
+
+## Cross-server during the run
+
+1. Kickoff: apollo → nwk1 `pollingInfoRequest`.
+2. Extract/parse/NLL: apollo → nwk1 `nllProvider`.
+3. NLL for non-numeric stores: apollo → athena `nllRequest` (`generate_nll.php:325`).
+4. Dashboard: nwk1 → apollo `pollingStatus` / `pollingList`.
+
+## Replacing this machine
+
+SST Distributed Map + `file_list.legacy_ingested` + SQS `WaitForTaskToken` replace `polling_processes` heartbeats and the 6-minute AccuZIP poll. See `05-modernization-mapping.mdc`.

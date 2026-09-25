@@ -1,0 +1,105 @@
+---
+description: AccuZIP NAS mounts, Pulse tab names, postal_validate/postal_data watch, 6-minute parse poll
+globs: projects/apollo/**,projects/bbi-accuzip-api/**,projects/bbi-sst/src/workflow/address-validate/**,projects/bbi-sst/src/core/files/**
+alwaysApply: false
+---
+
+# File storage and AccuZIP
+
+Live apollo mounts (2026-08-30 `mount` / `fstab`):
+
+| Share | Mount | Purpose |
+|---|---|---|
+| `//192.168.4.25/bbi-files` | `/media/bbi-files` | Press PDFs / hotel keys (`services/dominos/key_process.php`) — **not** CASS |
+| `//192.168.4.25/mail-exchange` | `/media/mail-data` | Archive / AccuZIP settings / `postal_*` copy |
+| `//192.168.4.30/maiL_data` | `/media/mail-data-accuzip` | AccuZIP VM watch dirs |
+
+Symlinks:
+
+- `/var/www/services/pulse_fetch/mail_data` → `/media/mail-data-accuzip`
+- `/var/www/services/pulse_fetch/mail_data_storage` → `/media/mail-data`
+
+nwk1 has **no** mail-data mounts. Presort UI is Athena HTTP (`01-api-contracts.mdc`), not these directories.
+
+## Layout
+
+```
+/media/mail-data-accuzip/          (accuzip-vm)
+  postal_validate/                 AccuZIP INPUT  (*_Export.csv)
+  postal_data/                     AccuZIP OUTPUT (*_valid.txt)
+
+/media/mail-data/                   (artemis mail-exchange)
+  postal_validate/  postal_data/  Arch/  "Valid Data Archive"/  "AccuZip Settings"/
+
+/var/www/services/pulse_fetch/core/
+  MailData/                        mmc_*.tab  (download target)
+  OrderData/                       OR2_*.tab
+```
+
+PHP AccuZIP API (`apollo/api/accuzip/bootstrap.php:27-31`) uses the `mail_data` symlink paths plus `postal_data/archive` and `mail_data_storage/postal_data/Arch`. systemd `accuzip-watchdog.service` is **active** on apollo.
+
+EC2 (`bbi-accuzip-api/app/accuzip_config.py:12-22`): `MAIL_DATA_SOURCE_ROOT` default `/media/mail-data-accuzip`; export `postal_validate/`; watch `postal_data/api_massmail_valid.txt`.
+
+## Pulse tab names
+
+| Prefix | Example | Local / S3 dir |
+|---|---|---|
+| `mmc_` | `mmc_00042_20260802_MassMailCustInfo.tab` | `MailData/` |
+| `mmc_` + `_da_` | `mmc_01262_20250302_da_20250303_100502_MassMailCustInfo.tab` | push synthesis |
+| `OR2_` | `OR2_00042_20260802_OrdersDump.tab` | `OrderData/` |
+
+Detection: `projects/bbi-sst/src/lib/pulse/file-utils.ts` (`startsWith OR2_` / `mmc_`). Insert scripts require `file[0]=='OR2'|'mmc'` and `.tab` (`insertFiles.inc:11-12,73-74`).
+
+**Push ZIP (incoming) is not `_da_`.** Parser (`parse-push-zip-filename.ts:20-51`):
+
+```
+[{uniqid}-]{store}_{YYYYMMDD}_{YYYYMMDD}_{HHMMSS}.zip
+```
+
+Synthesized tabs **do** use `_da_`. Ops brief name `<store>_<YYYYMMDD>_da_<YYYYMMDD>.zip` is the **tab** pattern, not the zip.
+
+## AccuZIP filenames
+
+### Legacy weekly ETL (`extractFiles.inc`)
+
+| Export (`postal_validate/`) | Validated (`postal_data/`) |
+|---|---|
+| `NewCustomer_Export.csv` | `newcustomer_valid.txt` |
+| `LateCustomer_Export.csv` | `latecustomer_valid.txt` |
+| `MassMail_Export.csv` | `massmail_valid.txt` |
+
+CSV header (`extractFiles.inc:21`): `Address,City,State,Zip,Store,Last Order,Customer Code`.
+
+Live suffix is **`_valid.txt`**, not `_validated.txt`.
+
+### Apollo HTTP API (`AccuZipTypes.php`)
+
+`API_NewCustomer_Export.csv` → `api_newcustomer_valid.txt` (same for Late / MassMail).
+
+### SST / EC2 (MassMail only)
+
+- Export S3: `accuzip/postal_validate/API_MassMail_Export.csv`
+- NAS: `api_massmail_valid.txt`
+- S3 archive: `accuzip/postal_data/api_massmail_valid_<unix>.txt`
+
+## Directory watch vs 6-minute loop
+
+**AccuZIP VM** is configured to watch `postal_validate/*_Export.csv` and write `postal_data/*_valid.txt` (apollo `api/accuzip/README.md`). PHP does not call AccuZIP over HTTP in the weekly job.
+
+**6-minute loop** = `pollingProcessing.php` cron (`bbi-cron-php/README.md:21`). After all `extract_*=1`, each tick:
+
+```
+file_exists(…/postal_data/newcustomer_valid.txt) → parseFiles 1
+latecustomer_valid.txt → 2
+massmail_valid.txt → 3
+```
+
+(`pollingProcessing.php:65-72`). No `sleep(360)` in AccuZIP daemons.
+
+**Apollo watchdog** (`api/accuzip/daemon/accuzip_watchdog.py`): inotify on `postal_data`, SHA/copy to served dir, HTTP job callback. **EC2**: watch `api_massmail_valid.txt`, MD5 gate, S3 upload, `SendTaskSuccess`. NAS→local copy cron **every 5 minutes** (`bbi-accuzip-api` README).
+
+## Ingest after validation
+
+Legacy: `parseFiles.inc` → `NewCustomers` / `LateCustomers` / MassMail + `scan_lapsed` (`parseFiles.inc:131,210,339,439`).
+
+SST: `ApplyPostalData` updates `mailing_addresses` (`05-modernization-mapping.mdc`). Do not reintroduce campaign-table writes on the AccuZIP apply path.

@@ -1,0 +1,122 @@
+---
+description: SST Step Functions vs Apollo cron — S3, /upload NGP zips, mailing_addresses, AccuZIP TaskToken daemon
+globs: projects/bbi-sst/**,projects/bbi-accuzip-api/**,projects/bbi-tf/workers/**
+alwaysApply: false
+---
+
+# Modernization mapping (SST + EC2 AccuZIP)
+
+Narrative: `projects/bbi-sst/docs/how-it-works.md`. Live code can differ from early `docs/superpowers/specs/` — prefer workflows + this rule.
+
+## Distributed Map vs cron locks
+
+**Old:** Sunday `polling.php` spawns PHP processes; `polling_processes` heartbeats; `pollingProcessing.php` every 6 minutes; `process_lock` mutex (`02-etl-state-machine.mdc`).
+
+**New:** Standard **Distributed Map** over S3 JSONL (`src/lib/workflow/sfn-jsonl-map.ts`). Fanout unit = store, `file_list` row, or store needing validation — not password-grouped PID ranges.
+
+| Workflow | SST resource | Fanout | Replaces |
+|---|---|---|---|
+| `DownloadFileWorkflow` | `download.workflow.ts` | stores → files | `pollingThread` NTLM pull |
+| `LegacyIngestWorkflow` | ingest workflow | pending `file_list` | `insertFiles.inc` |
+| `AddressValidateWorkflow` | `address-validate.workflow.ts` | stores with unvalidated addresses | extract/parse + 6-min wait |
+| `LegacyNllGenerateWorkflow` | NLL workflow | NLL providers | `generate_nll.php` |
+
+Daily cron (`sst.config.ts:297-307`): `DailyDownloadCron` `cron(0 1 * * ? *)` **America/New_York**, `chainNext: true` → download → ingest → address-validate → optional NLL. Download window is last completed week’s Sunday → yesterday ET. Chained NLL ignores that and uses last completed **Sunday 00:00:00 through Saturday 23:59:59 Eastern** (still that prior week on Sunday).
+
+Progress: `polling_watchdog` + `daily_polling.status` (`downloading` → `ingested` → `address_validated` → `generating_nll` → `completed`/`failed`). Idempotency: `file_list` flags + insert-ignore UKs — **not** `polling_processes`.
+
+Push stores (`pulse_version=4`) skip Pulse VPN; files come from `/upload` (`fetch-stores.task.ts` comment `EXCLUDE_PULSE_PUSH_STORES`).
+
+## S3 layout
+
+Bucket: SST `S3Storage` (prod often `bbi-marketing-data-pipeline-storage`).
+
+| Prefix | Contents |
+|---|---|
+| `dominos-uploaded/` | Raw POSTs including NGP zips |
+| `MailData/mmc_*.tab` | MMC tabs |
+| `OrderData/OR2_*.tab` | OR2 tabs |
+| `accuzip/postal_validate/API_MassMail_Export.csv` | AccuZIP input (overwrite) |
+| `accuzip/postal_data/api_massmail_valid_<unix>.txt` | Validated archive |
+| `executions/{watchdogId}/…` | JSONL manifests + Map ResultWriter |
+
+Tab key helper: `pulseTabS3Key` → `{MailData\|OrderData}/{filename}`.
+
+## Cloudflare Worker + `POST /upload`
+
+Worker `projects/bbi-tf/workers/upload-proxy.js` forwards `upload.bbimarketing.com` → API Gateway `/upload` (must forward body + Basic Auth; **no 308**).
+
+SST: `sst.config.ts` `POST /upload` → `src/http/upload/upload.handler`.
+
+**ZIP name** (`parse-push-zip-filename.ts:20-21`):
+
+```
+[{uniqid}-]{store}_{YYYYMMDD}_{YYYYMMDD}_{HHMMSS}.zip
+```
+
+Not `…_da_….zip`. `_da_` is on **output tabs** (`:50-51`):
+
+```
+mmc_{store5}_{reportStart}_da_{reportEnd}_{extractTime}_MassMailCustInfo.tab
+OR2_{store5}_{reportStart}_da_{reportEnd}_{extractTime}_OrdersDump.tab
+```
+
+Flow (`synthesize-push-zip.ts`): unzip require `CUS_*` + `OR2_*`; build MMC (late if delivery > threshold); upload both tabs; `file_list` insert `status: 1`, `ingested: false`, `legacy_ingested: false` (`:42-57` pattern via `insertFileListIfMissing`). Skip only if **both** MMC and OR2 rows exist; else regenerate.
+
+nwk1 `pollingInfoRequest` still marks `pulse_version=4` when a matching zip exists under `/var/www/upload.bbimarketing.com/dominos-uploaded` (`new/api/index.php:682-712`) — keep that directory contract if dual-running.
+
+## `mailing_addresses` + cohort SQL
+
+Schema: `03-database-schema.mdc`. Ingest mapper `src/core/files/legacy-raw-mappers.ts` copies MMC street into `old_*` and `address` with `is_valid=0`.
+
+Procedures (`docs/queries/report_procedures.sql`) — all join:
+
+```
+MassMail_RAW ⨝ mailing_addresses
+  ON store_number AND old_address = Street
+ AND pulse_profile_id = CustomerProfileID::text
+ AND is_invalid = false
+WHERE is_valid = 1
+```
+
+Windows: `p_start_date`/`p_end_date` converted with `AT TIME ZONE 'America/New_York'` because RAW epochs are ET wall-clock.
+
+Join still requires `pulse_profile_id` so AccuZIP rows attach. After the join, cohort identity is the household `(store_number, address, zip5)`, not Pulse `CustomerProfileID`.
+
+| Function | Rule |
+|---|---|
+| `get_new_customers` | New if `FirstOrderDate` is in the window and no `MassMail_RAW` at that address has `FirstOrderDate` in `[this FirstOrderDate − grace, this FirstOrderDate)`. Address match is PHP `LIKE`; K does not require the same Pulse profile. Grace default **180** days / `custom_stores.new_customer_grace` |
+| `get_late_customers` | `LastLateOrderDate` in window, one row per household; `new_keys` exclusion uses the household New rule |
+| `get_lapsed_customers` | PHP first-mail scan: last two `LastOrderDate`s on the certified household, calendar gap **28–180** days, `last + gap` inside the report window; skip New/Late this week. No `MassMail.lapsed` column. |
+
+Used by `LegacyNllGenerateWorkflow`, HTTP `/api/stores/{store}/customers/{type}`, Slack slash commands. Do **not** write `NewCustomers`/`LateCustomers`/`LapsedCustomers` during AccuZIP apply.
+
+## EC2 AccuZIP daemon + TaskToken
+
+Repo `projects/bbi-accuzip-api`. **Live contract is SQS FIFO + WaitForTaskToken**, not HTTP `POST /exports`.
+
+Step Functions (`address-validate.workflow.ts:156-167`):
+
+```
+WaitForAddressValidation
+  queue AccuzipValidateQueue (FIFO)
+  integration: token
+  timeout: 7 days
+  body: { downloadUrl, taskToken }
+```
+
+Daemon long-polls; downloads CSV to `{MAIL_DATA_SOURCE_ROOT}/postal_validate/API_MassMail_Export.csv`; AccuZIP writes `api_massmail_valid.txt`; watcher verifies write (MD5); uploads S3; `send_task_success(taskToken, {"validatedCsvUrl": "<presigned>"})` (`app/accuzip_sqs.py`). Timeout default 3h → `SendTaskFailure`. One `processing` job at a time.
+
+Optional ops resume: `POST /api/workflows/address-validate/callback` (`SendTaskSuccessCommand`) — not the production path.
+
+Resume: `ApplyPostalData` streams TSV, matches UK (`pulse_profile_id`, `store_number`, `old_*`), sets `address/city/state/zip5/crrt`, `is_valid=1`. Blank CRRT or errno `4.1`/`12.2`/`12.3` → `is_invalid=true` only if still unvalidated. Stamps watchdog `address_validated`.
+
+```
+NGP zip → CF Worker → POST /upload → S3 tabs + file_list
+VPN stores → DownloadFileWorkflow Map → same
+        → LegacyIngestWorkflow → MassMail_RAW / OR2_Raw + mailing_addresses
+        → AddressValidateWorkflow → SQS token → AccuZIP NAS → ApplyPostalData
+        → optional LegacyNllGenerateWorkflow (SQL cohorts)
+```
+
+When editing ingest or AccuZIP apply, keep `projects/nwk1/.../new/` polling UI (`pollingStatus` / `pollingList`) in mind: it still reads **apollo MySQL flags**, not Step Functions, unless `/sys/` SST UI is the target.

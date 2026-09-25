@@ -1,0 +1,6 @@
+[submodule "projects/bbi-accuzip-api"]
+	path = projects/bbi-accuzip-api
+	url = git@github.com:jchoi2x/bbi-accuzip-api.git
+[submodule "projects/bbi-cron-php"]
+	path = projects/bbi-cron-php
+	url = git@github.com:jchoi2x/bbi-cron-php.git

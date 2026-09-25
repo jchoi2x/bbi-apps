@@ -1,0 +1,103 @@
+---
+description: BBI host roles, network topology, nginx, MySQL, and workspace path map
+alwaysApply: true
+---
+
+# System overview (nwk1 / apollo / athena / artemis)
+
+Live inspection 2026-08-30 via `ssh nwk1` and `ssh apollo`. Local rsync mirrors: `projects/nwk1/system.bbimarketing.com`, `projects/apollo`. Related: `01-api-contracts.mdc`, `02-etl-state-machine.mdc`, `03-database-schema.mdc`, `04-file-storage-accuzip.mdc`, `05-modernization-mapping.mdc`.
+
+When changing ETL or APIs, verify the other side of the call (`nwk1` ↔ `apollo` ↔ `athena`) and whether `projects/bbi-sst` already replaced that path.
+
+## Hosts
+
+| Role | Host | Addresses | SSH | Stack (live) | Workspace |
+|---|---|---|---|---|---|
+| Frontend VPS | **nwk1** | Public `198.74.60.204`; Linode private `192.168.156.176`; WireGuard `10.14.0.100` (`wg0`) | `5022` | Native nginx + **PHP 5.6 FPM** (`/run/php/php5.6-fpm.sock`; 8.2 FPM installed but not nginx’s socket). MySQL/MariaDB `127.0.0.1:3306`. CLI `php` is 8.2. | `projects/nwk1/` |
+| Domino’s ETL | **apollo** | LAN `192.168.4.26/24`; GLS `tun0` `10.244.15.246` (OpenConnect `domvpn2.gls.com`) | `5022` | nginx + **PHP 5.6 FPM** (`/var/run/php5-fpm.sock`). MySQL `127.0.0.1:3306` + LAN `192.168.4.26:13306`. GOST SOCKS `:1080`. RocketShipIt `:27015`. | `projects/apollo/` |
+| Non-Domino warehouse | **athena** | LAN `192.168.4.24` | `5022` | nginx, PHP 5 FPM, MySQL `127.0.0.1:3306` | not mirrored here |
+| Hypervisor / NAS | **artemis** | `192.168.4.25` | — | CIFS shares `bbi-files`, `mail-exchange` | — |
+| AccuZIP VM | **accuzip-vm** | `192.168.4.30` | — | Windows AccuZIP CASS; share `maiL_data` | — |
+| Render VM | **render-vm** | `192.168.4.29` | — | Print/render | — |
+
+**nwk1 role:** `https://system.bbimarketing.com` (legacy PHP) and `/new/` (AdminLTE dashboard). Master `bbi_system` CRM (`company` / `locations`). Triggers reports against apollo. Hosts `upload.bbimarketing.com` (legacy Dominos drop; SST Cloudflare Worker now proxies most uploads).
+
+**apollo role:** Pulse poller, `MassMail_RAW` / `OR2_Raw` warehouse, AccuZIP file handshake, NLL/ROI PHP. Public name `vpn.bbimarketing.com` (Cloudflare → office WAN). Live user crontab (Eastern): Sunday 16:00 `polling.php`, every 6 min `pollingProcessing.php`, Mon–Fri 15:45 `key_index.php`, daily 11:00 `mediaMixModelCron.php`. See `docs/projects/apollo.md`.
+
+**athena role:** Marco’s / Vocelli / Flyers warehouse. Apollo and nwk1 call `https://192.168.4.24/v2/…` on the LAN.
+
+**artemis role:** CIFS NAS. Apollo fstab (do not copy share passwords into new files):
+
+- `//192.168.4.25/bbi-files` → `/media/bbi-files`
+- `//192.168.4.25/mail-exchange` → `/media/mail-data`
+- `//192.168.4.30/maiL_data` → `/media/mail-data-accuzip`
+
+Symlinks on apollo: `/var/www/services/pulse_fetch/mail_data` → `/media/mail-data-accuzip`; `mail_data_storage` → `/media/mail-data`.
+
+Docker: nwk1 has `docker0` / `172.18.0.0/16` but **no running containers** on inspection. Production PHP is not containerized.
+
+## Network routing
+
+```
+GLS / Domino's  10.x / 100.x :59101  (NTLM HTTP PulseWeb)
+        ^
+        | OpenConnect tun0 on apollo
+        |
+Tampa LAN 192.168.4.0/24
+  gateway 192.168.4.1  WAN gateway.bbimarketing.com = 47.198.214.106
+  apollo .26  <->  athena .24   (internal HTTPS)
+  artemis .25  accuzip-vm .30  render-vm .29
+        ^
+        | WireGuard 10.14.0.0  (nwk1 = 10.14.0.100)
+        |
+nwk1 198.74.60.204
+  /etc/hosts: 192.168.4.26 vpn.bbimarketing.com
+```
+
+| Name | Resolves / used as |
+|---|---|
+| `system.bbimarketing.com` | nwk1 public HTTPS (Let’s Encrypt) |
+| `nwk1.nj.bbimarketing.com` | nwk1 hostname |
+| `vpn.bbimarketing.com` | Cloudflare → office WAN → apollo `:443`. nwk1 hosts file pins LAN IP when on WireGuard. |
+| `upload.bbimarketing.com` | nwk1 vhost **and** Cloudflare Worker proxy to SST `POST /upload` (`projects/bbi-tf/workers/upload-proxy.js`) |
+| `gateway.bbimarketing.com` | Office WAN `47.198.214.106` |
+
+Pulse store queries: `http://{vpn_ip_address}:59101/PulseWeb/{EOutbox\|EArchive}/` with `CURLAUTH_NTLM` (`projects/apollo/services/pulse_fetch/core/functions.inc` ~28, 36–43, 263). Traffic leaves apollo on `tun0`. GOST (`gost-socks.service`, listen `192.168.4.26:1080`) is a SOCKS5 helper for operators who are **not** on GLS; PHP pollers do not use it.
+
+## Nginx (live)
+
+**nwk1** `/etc/nginx/nginx.conf`: `client_max_body_size 100M`; default servers return `444`; `include sites-enabled/*`.
+
+`system.bbimarketing.com` (`/etc/nginx/sites-available/system.bbimarketing.com`):
+
+- HTTP → `301` HTTPS
+- `root /var/www/system.bbimarketing.com`; `location ~ \.php$` → `snippets/fastcgi-php.conf` → **php5.6-fpm**
+- `/new/min/` minify rewrite; `/new/api/v2/` `try_files` + `fastcgi_param HTTP_AUTHORIZATION`
+- deny `.pem|.key|.inc|.json` (`444`)
+
+`upload.bbimarketing.com`: TLS 1.3; `root /var/www/upload.bbimarketing.com`; `/dominos-uploaded/` denied.
+
+**apollo** `/etc/nginx/nginx.conf`: `client_max_body_size 50M`. HTTP `:80` serves `/api/` and `/api/accuzip/` on php5-fpm (`fastcgi_read_timeout 1800s`); other HTTP → HTTPS. HTTPS `:443` cert `vpn.bbimarketing.com`; `root /var/www`; `.inc` → `444`.
+
+## MySQL
+
+| Host | Bind | DB / user (from PHP, not secrets) |
+|---|---|---|
+| nwk1 | `127.0.0.1:3306` (`mariadb.conf.d/50-server.cnf`) | `bbi_system` / `bbi_system` — `projects/nwk1/system.bbimarketing.com/new/config/db.inc` |
+| apollo | `127.0.0.1:3306` + `192.168.4.26:13306` | `dominos` / `dominos` — `projects/apollo/services/pulse_fetch/core/config.inc` |
+
+Do not copy DB passwords from those files into new code or rules.
+
+## Code map
+
+| Path | What |
+|---|---|
+| `projects/nwk1/system.bbimarketing.com/new/` | Dashboard (`?p=` → `*.inc`), `api/index.php` (Apollo callbacks), `api/v2/` |
+| `projects/nwk1/system.bbimarketing.com/sys/` | Newer SST-facing UI overlay |
+| `projects/apollo/services/pulse_fetch/core/` | Weekly poller |
+| `projects/apollo/v2/index.php` | Public warehouse API for nwk1 |
+| `projects/apollo/api/accuzip/` | HTTP AccuZIP job API + python watchdog |
+| `projects/bbi-sst/` | AWS Step Functions replacement |
+| `projects/bbi-accuzip-api/` | EC2 AccuZIP / TaskToken daemon |
+| `docs/infrastructure.md` | ASCII topology (Phase 1 cloud target) |
+| `docs/projects/bbi-nwk1-new.md` | `/new` page catalog |

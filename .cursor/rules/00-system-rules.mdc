@@ -1,0 +1,32 @@
+---
+description: Global system topology and workspace routing rules
+globs: *
+alwaysApply: true
+---
+
+# Workspace Architecture & Routing Rules
+
+You are working in the `bbi-apps` multi-environment workspace. Prefer these Cursor rules over missing `docs/*.md` stubs:
+
+- Topology & hosts: `.cursor/rules/00-system-overview.mdc`
+- Cross-server HTTP: `.cursor/rules/01-api-contracts.mdc`
+- Weekly Pulse ETL: `.cursor/rules/02-etl-state-machine.mdc`
+- Tables / FKs: `.cursor/rules/03-database-schema.mdc`
+- NAS / AccuZIP files: `.cursor/rules/04-file-storage-accuzip.mdc`
+- SST replacement: `.cursor/rules/05-modernization-mapping.mdc`
+
+Also: `docs/infrastructure.md` (ASCII diagram), `docs/projects/bbi-nwk1-new.md` (`/new` UI), `projects/bbi-sst/docs/how-it-works.md`.
+
+## Subproject Scopes
+
+- **`projects/nwk1/`** (rsync of `/var/www`): `system.bbimarketing.com` legacy + `/new/` dashboard. Related git checkout: `projects/bbi-dashboard`.
+- **`projects/apollo/`** (rsync): cron ETL, `vpn.bbimarketing.com`, Pulse NTLM `:59101`.
+- **`projects/bbi-sst/`**: AWS SST Step Functions & Lambdas (daiy pipeline).
+- **`projects/bbi-accuzip-api/`**: EC2 AccuZIP NAS + `SendTaskSuccess`.
+- **`projects/bbi-tf/`**: Cloudflare DNS/Workers (incl. `upload.bbimarketing.com` proxy) and AWS Terraform.
+
+## Guardrails
+
+1. **Network:** public `*.bbimarketing.com` vs Tampa `192.168.4.0/24` vs Domino’s GLS `10.x`/`100.x` vs WireGuard `10.14.0.0`.
+2. **Schema:** changing apollo ETL or SST ingest — check nwk1 `/new` consumers (`pollingStatus`, `pollingList`, NLL dates) and `mailing_addresses` join keys.
+3. **Secrets:** API tokens live hardcoded in PHP; do not copy DB or CIFS passwords from `db.inc` / `fstab` into new files.

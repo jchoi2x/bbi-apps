@@ -1,0 +1,142 @@
+---
+description: Cross-server HTTP contracts nwk1 ↔ apollo ↔ athena (tokens, bodies, responses)
+globs: projects/nwk1/**/*.php,projects/apollo/**/*.php,projects/bbi-dashboard/**/*.php
+alwaysApply: false
+---
+
+# API contracts (nwk1 ↔ apollo ↔ athena)
+
+Tokens are **hardcoded in PHP**, not env vars. Prefer changing them in the cited files on both sides together. Most nwk1→apollo curls set `CURLOPT_SSL_VERIFYHOST/PEER = 0`. Apollo→nwk1 polling uses **verify on**.
+
+## Auth tokens
+
+| Token (source of truth) | Used by |
+|---|---|
+| `34EIhMf/g~cHD(|7%jJ61;T5kC9W$x` | apollo `v2/index.php` `pollingStatus`, `pollingList`, `nllAvailableDates`, `newNLLAvailableDates`; nwk1 dashboard GETs |
+| `YQwQv8TEuXeRpY4mnfCmgMy5eJemU9OZTQKFDxx1pxnD95GQ0urwYApGBH04Pdu9dR1e7E2oAuhR6J6rFSK3KT8guVeWtYpphinb9o0xFU8q86919GnhcxLVM2iLFghBOXCQKZTypu7IKQUWkO5oFvPWzh9zStsi6DmLDktRXtLQrOkhoLnuWUTYHIaOpRj47X2xJBw7mcEV28XrCOvrPAfML5Er891bscboJvxccXfU7dXCHOhIvybAnms1DL` | nwk1 `$randomStringConstructor` (`new/api/index.php:5`); apollo POST `auth` for `pollingInfoRequest` / `nllProvider` |
+| `XIxG5Q7pmDh37QWdHi9C` | nwk1 GET `?k=` (`api/index.php:7`) |
+| `nAq}v_4WT{q$)[,8%AWA7aRaj` | `v2/?dataSelector` |
+| `U*f($Cne(f4atShSuR3)Bv;@!` | `blacklist`, `databaseExporter`, `singleAddressROI` |
+| `YoP30kNHNd4oaOYzFVDA` | `v2/cli/process.php` |
+| `Hw9XtO9f5PsQbCwVj285nsawr` | Athena `presortDetails`, `nllRequest`, and apollo-forwarded Vocelli calls |
+
+Host aliases: apollo = `https://vpn.bbimarketing.com` **or** `https://192.168.4.26`. Athena = `https://192.168.4.24`. Callers mix both; prefer `vpn.bbimarketing.com` from nwk1 (public/WG) and `192.168.4.24` on LAN.
+
+---
+
+## nwk1 → apollo (`vpn.bbimarketing.com`)
+
+### Status / list (dashboard)
+
+| Call | Source | Request | Response |
+|---|---|---|---|
+| GET `/v2/?pollingStatus&auth=34EIhMf…` | `new/main.inc:136`, `new/pollingStatus.inc:22` | none; timeout 3s; SSL off | `{start_time,end_time,state,status}` — mapped in `projects/apollo/v2/index.php:2-36`. Empty body → synthetic `contactError` on nwk1 |
+| GET `/v2/?pollingList&auth=34EIhMf…` | `pollingStatus.inc:41`, `new/cron/disconnectedPollingReport.php` | optional `store`, `client`, `success` | `[{store_number,client_name,success,success_time,fail_reason}]` (`v2/index.php:39-69`) |
+
+### NLL dates / reports
+
+| Call | Source | POST | Notes |
+|---|---|---|---|
+| POST `/v2/?newNLLAvailableDates` | `new/queries/dominos_direct_mail.php`, `vocelli_direct_mail.php`, `config/ajax.php` (LAN `192.168.4.26`) | `auth=34EIhMf…`, `rd_available`, `location_data` JSON `[{location_number, real_location_number}]` | Handler `v2/index.php:146`. If `rd_available==3`, apollo **forwards** to athena `externalNLLROIReport&getDates` (`:164-171`) |
+| POST `/v2/cli/process.php` | `ajax.php` (`formType=sysNLLROIReport`, `sysMailROIReport`, `newNLLROIReport`); browser forms to `192.168.4.26` | `auth=YoP30kNH…`, `formType`, `data` JSON or `location_data` / `timePeriod[]` | Success string `ok` or **redirect** to nwk1 query pages (`apollo/v2/cli/process.php:151-254`) |
+| Browser POST `/v2/reports/saturationReports.php` | `new/client.inc:524` | `store_numbers`, flags | LAN 4.26 |
+| Browser POST `/v2/reports/simplifiedReport.php` | `client.inc:551` | `franchisee_name`, `store_numbers[]`, `time_period` | |
+| GET `/v2/nll_files/{id}.jpg` | `nllManager.inc` | — | Creative images |
+
+### Data / lists / ROI
+
+| Call | Source | POST | Response |
+|---|---|---|---|
+| POST `/v2/?dataSelector` | `mailConfig/*-eddm-mail.inc`, `*-saturation-mail.inc`, `ajax.php`, `projects/updateDropCounts.php`, `cli/externalParse.php` | `auth=nAq}v_4W…`; `store_numbers` or `store_number`/`eddm` or `zip5` or `zipcrrt[]` | JSON counts/routes (`v2/index.php:708`) |
+| POST `/v2/?databaseExporter` | `config/updater.php:1350` | `auth=U*f($Cne…`, `store_numbers`, `data` JSON zip/crrt | TSV/JSON export (`:1119`) |
+| POST `/v2/?blacklist` | `marketingBlacklist.inc`, `hotelImporter.inc`, `ajax.php` `pt==34` | `auth=U*f($Cne…`, `type=fetch` **or** `type=addition` + `data` JSON address | `{status:'ok'}` (`:1363`) |
+| POST `https://192.168.4.26/v2/?singleAddressROI` | `ajax.php` `pt==11`, CLI hotel ROI, `listExport.php` | `auth=U*f($Cne…`, `store_number`, `address`, `phone_number`, `name`, optional dates | `{net_orders,net_sales,average}` (`:1243`) |
+
+### Shipping on apollo
+
+| Call | Source |
+|---|---|
+| POST `https://vpn.bbimarketing.com:27015/api/v1/` JSON + `x-api-key` | `new/config/classes.inc` (SSL **verify on**) |
+| POST `http://vpn.bbimarketing.com:27016/` ZPL | `config/shipping.php` (often down) |
+
+### Legacy `/services/` (still live)
+
+GET `https://vpn.bbimarketing.com/services/{dominos\|rpm_data/roi}/return_roi.php?store=&hotel=&…` — pipe-delimited ROI. `remote_commands.php?auth=34EIhMf…&op=nll_status|new_mail|send_files`.
+
+---
+
+## apollo → nwk1 (`https://system.bbimarketing.com/new/api/`)
+
+POST auth must equal `$randomStringConstructor` (`api/index.php:659`). Fail → **401** `"Unauthorized"` (`:882`). Unknown `type` → **400** `{status:failure,results:…}`.
+
+### `type=pollingInfoRequest` (`:664-735`)
+
+**Caller:** `projects/apollo/services/pulse_fetch/core/polling.php:10-31` (SSL **verify on**).
+
+POST: `auth`, `type=pollingInfoRequest`. Optional: `cid`, `store_numbers[]`, `orderBy=store_number` (apollo kickoff sends none of these).
+
+nwk1: companies with `rd_available='1'`; locations with `vpn_ip_address IS NOT NULL`; creds = location `vpn_custom_*` else company `poll_username`/`poll_password`. Push stores (`pulse_version=4`) if a zip exists under `/var/www/upload.bbimarketing.com/dominos-uploaded` matching `^[^-]+-(\d{5})_`.
+
+```json
+{"status":"ok","results":[{"store_number","client_name","vpn_ip_address","username","password","pulse_version"}]}
+```
+
+Apollo inserts into `daily_polling` (does **not** persist `pulse_version`).
+
+### `type=nllProvider` (`:737-740` → `nllProvider.inc`)
+
+| `request` | Lines | Extra POST | Returns |
+|---|---|---|---|
+| `1` | `:7` | — | NLL-enabled stores + `nll_settings` tuples |
+| `2` | `:78` | — | test-file seed rows |
+| `3` | `:437` | `ct`, `client` or `store` | variable CC/EXP |
+| `4` | `:587` | `store` | one settings tuple |
+| `5` | `:668` | — | coupon-stock alerts |
+| `6` | `:688` | `store` | lat/lng (may geocode) |
+
+Callers: `extractFiles.inc` (req 4), `parseFiles.inc` / `generate_nll.php` (1,2,3,5). Same `auth` as polling.
+
+### Other POST types
+
+| `type` | Lines | POST | Response |
+|---|---|---|---|
+| `frequencyProvider` | `:742-785` | — | active freq-program stores or `{status:fail}` |
+| `eddmProvider` | `:787-861` | `mail_date_start/end` **or** `inhome_date_start/end`; optional `dominosOnly` | jobs + `drops[].drop_data{store_number,zipcrrt,count,type}` |
+| `locationProvider` | `:863-873` | — | `{status:ok, results:[{location_number, real_location_number}]}` |
+
+### GET `?k=XIxG5Q7…&t=`
+
+`t=1…7` hotel/location/client/order helpers. Apollo ROI/mail scripts use `t=5` (location) and `t=3`/`t=7` (hotel). Example: `v2/index.php:1228`.
+
+---
+
+## apollo ⇄ athena (`https://192.168.4.24/v2/`)
+
+SSL verify **off**. Athena auth `Hw9XtO9f5PsQbCwVj285nsawr`.
+
+| Apollo caller | Athena endpoint | When / body |
+|---|---|---|
+| `generate_nll.php:325,439,691,778` | `?nllRequest` | Non-numeric `store_number` (Vocelli/etc.). POST `auth`, `store_number`, `real_store_number`, `requestType` = `newCustomer`\|`lateCustomer`\|`lapsedCustomer`, optional `limit`. JSON array of address rows |
+| `v2/index.php:171` | `?externalNLLROIReport&getDates` | Vocelli date proxy (`rd_available==3`) |
+| `v2/index.php:727`, `reports/saturationReports.php:31` | `?saturationReports` | saturation export |
+| `v2/index.php:1066` | `?dataExists` | |
+| `v2/index.php:1141` | `?databaseExporter` | |
+| `customProjects/externalMailROIReports.php:84` | `?externalROIReport` | |
+| `customProjects/vocelliROIReport.php:103` | `?externalNLLROIReport&getROIData` | |
+| `customProjects/externalEDDMCRRTROI.php:85` | `?externalEDDMROIReport` | |
+| `customProjects/fbCustomerReport.php:42` | `?externalFbExporter` | |
+| `mailProcessing/mail_list.php:271` | `?smartMailRequest` | |
+
+---
+
+## nwk1 → athena
+
+POST `https://192.168.4.24/v2/?presortDetails` — `new/viewDropLogistics.inc:46-61`. POST `auth=Hw9XtO9…`, `job_number`, `drop_code`. JSON DDU logistics; HTTP≠200 or `error` → show message. **Not** AccuZIP file I/O.
+
+---
+
+## Error / redirect patterns
+
+- nwk1 dashboard: empty apollo body → fake completed error state (progress 100, `contactError`).
+- apollo `process.php`: HTML `Location:` back to `system.bbimarketing.com/new/queries/*_direct_mail.php?id=&status=success|error`.
+- Shared-secret mismatch: 401 text or 400 JSON. No OAuth between these hosts.

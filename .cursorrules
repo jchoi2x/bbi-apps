@@ -1,0 +1,18 @@
+# .cursorrules
+
+You are working in the `bbi-apps` monorepo. Use the routing table below to find architectural context based on the files you are modifying:
+
+## Context Routing Table
+
+| If editing files in... | Primary Context Doc | Key Constraints & Context |
+| :--- | :--- | :--- |
+| `projects/bbi-nwk1/system.bbimarketing.com/new/**` | `docs/projects/bbi-nwk1-new.md` | Modern dashboard UI; ETL visualization; consult `docs/data-pipelines-etl.md` for data shapes. |
+| `projects/bbi-nwk1/system.bbimarketing.com/**` | `docs/projects/bbi-nwk1-legacy.md` | Legacy PHP dashboard on remote SSH server (`/var/www`). |
+| `projects/apollo/**` | `docs/projects/apollo.md` | Remote SSH mount. Requires Domino's VPN connectivity. Host for `vpn.bbimarketing.com` & cron ETL. |
+| `projects/bbi-sst/**` | `docs/projects/bbi-sst.md` | AWS SST v2/Ion Step Functions & Lambdas. Interacts with Apollo cron triggers. |
+| `projects/bbi-accuzip-api/**` | `docs/projects/bbi-accuzip-api.md` | NAS mount dependent; address validation and CASS jobs. |
+| `projects/bbi-tf/**` | `docs/projects/bbi-tf.md` | Cloudflare DNS for `*.bbimarketing.com` and AWS Terraform state. |
+
+## General Guardrails
+1. **Network Boundaries**: Always verify whether a service is accessed over the public internet (`*.bbimarketing.com`), local network, or Domino's VPN (`vpn.bbimarketing.com`).
+2. **Cross-Service Verification**: If modifying an ETL state or endpoint in `bbi-sst` or `apollo`, check if `projects/bbi-nwk1/.../new/` depends on that response schema before finalizing changes.

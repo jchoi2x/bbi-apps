@@ -1,0 +1,31 @@
+{
+  "folders": [
+	{
+		"path": "projects/bbi-accuzip-api"
+	},
+	{
+		"path": "projects/bbi-sst"
+	},
+	{
+		"path": "projects/bbi-cron-php"
+	},
+	{
+		"path": "projects/bbi-tf"
+	}
+],
+  "settings": {
+    "files.exclude": {
+      "**/.git": true,
+      "**/.svn": true,
+      "**/.hg": true,
+      "**/CVS": true,
+      "**/.DS_Store": true,
+      "**/*.log": true,
+      "**/node_modules": true,
+      "**/test/assets": true,
+      "**/*.tmp": true,
+      "**/*.temp": true,
+      "**/*.swp": true,
+    },
+  },
+}
