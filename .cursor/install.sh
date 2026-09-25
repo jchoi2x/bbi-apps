@@ -1,14 +1,50 @@
 #!/usr/bin/env bash
-# Cloud Agent install: idempotent repository bootstrap for the bbi-apps monorepo.
-# Runs after the repo is checked out. System tools (bun, uv, docker, php,
-# terraform, node, python) are baked into the base snapshot; this script only
-# refreshes source-derived state (submodules + per-project dependencies).
+# Cloud Agent install: idempotent bootstrap for the bbi-apps monorepo.
+# Runs after the repo is checked out. Self-contained: installs the required
+# system toolchain if it is not already present (so it works on the default
+# base image), then refreshes submodules and per-project dependencies. When the
+# environment boots from a prebuilt snapshot/build, the tool installs are no-ops.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 export PATH="$HOME/.bun/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
+
+TERRAFORM_VERSION="1.9.8"
+
+echo "== Ensure system toolchain (idempotent) =="
+if ! command -v bun >/dev/null 2>&1; then
+  echo "   installing bun"
+  curl -fsSL https://bun.sh/install | bash >/dev/null
+fi
+export PATH="$HOME/.bun/bin:$PATH"
+
+if ! command -v uv >/dev/null 2>&1; then
+  echo "   installing uv"
+  curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null
+fi
+export PATH="$HOME/.local/bin:$PATH"
+
+if ! command -v php >/dev/null 2>&1; then
+  echo "   installing php-cli"
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq php-cli unzip
+fi
+
+if ! command -v terraform >/dev/null 2>&1; then
+  echo "   installing terraform ${TERRAFORM_VERSION}"
+  command -v unzip >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq unzip; }
+  tmpzip="$(mktemp --suffix=.zip)"
+  curl -fsSL -o "$tmpzip" "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+  sudo unzip -o -q "$tmpzip" -d /usr/local/bin
+  rm -f "$tmpzip"
+fi
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "   installing docker engine + compose"
+  curl -fsSL https://get.docker.com | sudo sh >/dev/null
+fi
 
 echo "== Resolve git submodules =="
 # Remove any stale *untokenized* github rewrite that could shadow the Cloud
@@ -19,7 +55,7 @@ git config --global --unset-all url."https://github.com/".insteadOf 2>/dev/null 
 # to GitHub over HTTPS with a scoped token. Reuse the credential already
 # embedded in the origin remote (or gh's token) to rewrite GitHub URLs to
 # authenticated HTTPS. Passed via `git -c` so the token is NOT persisted into
-# git config or the environment snapshot.
+# git config or an environment snapshot.
 auth_args=()
 origin_url="$(git config --get remote.origin.url || true)"
 cred=""
