@@ -11,6 +11,10 @@ cd "$REPO_ROOT"
 export PATH="$HOME/.bun/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
 
 echo "== Resolve git submodules =="
+# Remove any stale *untokenized* github rewrite that could shadow the Cloud
+# Agent's built-in tokenized credential (a plain rewrite makes clones prompt
+# for a username and fail non-interactively).
+git config --global --unset-all url."https://github.com/".insteadOf 2>/dev/null || true
 # .gitmodules pins git@github.com: SSH URLs, but the Cloud Agent authenticates
 # to GitHub over HTTPS with a scoped token. Reuse the credential already
 # embedded in the origin remote (or gh's token) to rewrite GitHub URLs to
