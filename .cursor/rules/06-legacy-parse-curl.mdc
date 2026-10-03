@@ -13,6 +13,7 @@ bun -e '
 import { BBI_OPS_API_KEY } from "./src/http/lib/ops-api-key.ts";
 const body = {
   dryRun: true,
+  force: true,
   store_numbers: ["9670", "6120", "5068", "4284", "8054"],
   reportStart: "09/20/2026",
   reportEnd: "09/26/2026",
@@ -36,7 +37,7 @@ console.log(await response.text());
 - `store_numbers` is optional. Omit it to fan out every distinct `file_list` store. Keep ad-hoc runs to a short explicit list.
 - `reportStart` / `reportEnd` are `MM/DD/YYYY`. Omit both to use the last completed Sunday–Saturday Eastern week.
 - **202** body is `{ executionArn, startDate }`. The watchdog id is created inside GenerateStoreManifest.
-- **409** `{ error, executionArn }` means a legacy-parse execution is already `RUNNING`. The new start exits without starting another one.
+- **409** `{ error, executionArn }` means a legacy-parse execution is already `RUNNING`. The new start exits without starting another one. Pass `force: true` to skip that check (HTTP-only; not forwarded to the execution input).
 
 ## Resume after AccuZIP
 
