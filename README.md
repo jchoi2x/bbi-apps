@@ -32,4 +32,4 @@ git submodule update --init --recursive
 
 ## Agent board
 
-Suggestion and bug cards live on a GitHub Projects board. Moving a card to **Todo** starts the `pickup-todo` [GitHub Agentic Workflow](https://github.github.com/gh-aw/). How to add cards and finish board setup: `.github/workflows/pickup-todo.md` and `.github/ISSUE_TEMPLATE/`.
+Suggestion and bug cards live on a GitHub Projects board. Monday, Wednesday, and Friday mornings (America/New_York), `suggest-backlog` assesses status and may file cards into **Backlog**. Moving a card to **Todo** starts the `pickup-todo` [GitHub Agentic Workflow](https://github.github.com/gh-aw/). Sources: `.github/workflows/suggest-backlog.md`, `.github/workflows/pickup-todo.md`, and `.github/ISSUE_TEMPLATE/`.
