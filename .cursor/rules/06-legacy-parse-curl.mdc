@@ -1,0 +1,65 @@
+---
+description: How to curl-start the legacy-parse workflow (dry run, store list, API URL, ops key)
+globs: projects/bbi-sst/src/workflow/legacy-parse/**,projects/bbi-sst/src/http/workflow/start-legacy-parse.ts,projects/bbi-sst/src/http/workflow/start-legacy-parse-resume.ts
+alwaysApply: false
+---
+
+# Start legacy-parse
+
+`POST /api/workflows/legacy-parse/start` on the jchoi API Gateway. Run from `projects/bbi-sst`. `sst dev` must already be up. Import the ops key; do not paste it into the command or into chat.
+
+```bash
+bun -e '
+import { BBI_OPS_API_KEY } from "./src/http/lib/ops-api-key.ts";
+const body = {
+  dryRun: true,
+  store_numbers: ["9670", "6120", "5068", "4284", "8054"],
+  reportStart: "09/20/2026",
+  reportEnd: "09/26/2026",
+};
+const response = await fetch("https://jl4o8lehgk.execute-api.us-east-2.amazonaws.com/api/workflows/legacy-parse/start", {
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+    "x-api-key": BBI_OPS_API_KEY,
+  },
+  body: JSON.stringify(body),
+  signal: AbortSignal.timeout(120000),
+});
+console.log(response.status);
+console.log(await response.text());
+'
+```
+
+- `dryRun` defaults to true. True writes `"NewCustomers"`, `"LateCustomers"`, `"LapsedCustomers"`, and `"MassMail"` in `lp_<watchdogId>`. Pass `false` to write those tables in `public`.
+- `keepSchema` defaults to true. The run leaves `lp_<watchdogId>` in place when it finishes or fails. Pass `false` to drop that schema.
+- `store_numbers` is optional. Omit it to fan out every distinct `file_list` store. Keep ad-hoc runs to a short explicit list.
+- `reportStart` / `reportEnd` are `MM/DD/YYYY`. Omit both to use the last completed Sunday–Saturday Eastern week.
+- **202** body is `{ executionArn, startDate }`. The watchdog id is created inside GenerateStoreManifest.
+- **409** `{ error, executionArn }` means a legacy-parse execution is already `RUNNING`. The new start exits without starting another one.
+
+## Resume after AccuZIP
+
+`POST /api/workflows/legacy-parse/resume` starts at ProcessValidatedAddresses. `lp_<watchdogId>` must already exist. `s3Url` is the AccuZIP output file (`s3://` or HTTPS).
+
+```bash
+bun -e '
+import { BBI_OPS_API_KEY } from "./src/http/lib/ops-api-key.ts";
+const body = {
+  watchdogId: "425",
+  dryRun: true,
+  s3Url: "s3://bbi-marketing-data-pipeline-storage/accuzip/postal_data/api_massmail_valid.txt",
+};
+const response = await fetch("https://jl4o8lehgk.execute-api.us-east-2.amazonaws.com/api/workflows/legacy-parse/resume", {
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+    "x-api-key": BBI_OPS_API_KEY,
+  },
+  body: JSON.stringify(body),
+  signal: AbortSignal.timeout(120000),
+});
+console.log(response.status);
+console.log(await response.text());
+'
+```

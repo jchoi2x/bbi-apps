@@ -96,7 +96,7 @@ massmail_valid.txt → 3
 
 (`pollingProcessing.php:65-72`). No `sleep(360)` in AccuZIP daemons.
 
-**Apollo watchdog** (`api/accuzip/daemon/accuzip_watchdog.py`): inotify on `postal_data`, SHA/copy to served dir, HTTP job callback. **EC2**: watch `api_massmail_valid.txt`, MD5 gate, S3 upload, `SendTaskSuccess`. NAS→local copy cron **every 5 minutes** (`bbi-accuzip-api` README).
+**Apollo watchdog** (`api/accuzip/daemon/accuzip_watchdog.py`): inotify on `postal_data`, SHA/copy to served dir, HTTP job callback. **EC2**: watch `api_massmail_valid.txt`, MD5 gate, S3 upload, `SendTaskSuccess`. NAS→local copy cron **every 5 minutes**, then deletes the NAS file after a successful copy (`bbi-accuzip-api` README).
 
 ## Ingest after validation
 

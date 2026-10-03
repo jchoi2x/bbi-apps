@@ -1,0 +1,20 @@
+---
+description: Update AGENTS.md with durable project intelligence in the same change
+alwaysApply: true
+---
+
+# Update AGENTS.md
+
+When a change teaches how this code actually behaves, write that into the nearest `AGENTS.md` in the same change. For legacy-parse, that file is `projects/bbi-sst/src/workflow/legacy-parse/AGENTS.md`.
+
+Record facts a later edit would get wrong: write targets, read targets, task ownership, contracts, and gotchas. Replace a stale sentence instead of appending a second version of it.
+
+Leave out session logs, execution ARNs, secrets, and one-off run notes.
+
+```markdown
+# ❌ Stale after the write target moves
+ParseNew inserts into public."NewCustomers" only.
+
+# ✅ Same change updates the note
+ParseNew inserts through `legacyParseCampaignSchema`. `dryRun` selects the schema. It does not skip the write.
+```
