@@ -1,0 +1,46 @@
+name: Bug card
+description: Add a bug to the BBI Agent Board Backlog
+title: "[bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This issue becomes a **Backlog** card. Move it to **Todo** to start Pickup Todo.
+        Do not include secrets or production credentials.
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to see it
+      description: Steps or URLs. Prefer public or already-documented hosts.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Umbrella docs / GitHub automation (this repo)
+        - nwk1 /new dashboard
+        - Apollo / vpn.bbimarketing.com
+        - AccuZIP / files
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Out of scope
+      value: Do not change SST/NLL pipeline code or submodule SHAs unless this card is explicitly about that area.

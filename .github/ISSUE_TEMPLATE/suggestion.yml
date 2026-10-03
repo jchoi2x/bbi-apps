@@ -1,0 +1,54 @@
+name: Suggestion card
+description: Add a feature or improvement idea to the BBI Agent Board Backlog
+title: "[suggestion] "
+labels: [suggestion, enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This issue becomes a **Backlog** card on the BBI Agent Board (auto-add).
+        Move it to **Todo** when you want Pickup Todo to start a gh-aw agent.
+        Do not put secrets, passwords, or API keys here.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - Feature
+        - Improvement
+        - Docs / workflow
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: What should we do?
+      description: One or two sentences. This is the agent prompt.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: Observable checks the agent can verify without production writes.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Umbrella docs / GitHub automation (this repo)
+        - nwk1 /new dashboard
+        - Apollo / vpn.bbimarketing.com
+        - AccuZIP / files
+        - Other (describe below)
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Out of scope / do not touch
+      description: Call out SST ingest, NLL generate, LegacyParse, or live DB work so the agent skips those.
+      value: Do not change SST/NLL pipeline code or submodule SHAs unless this card is explicitly about that area and has been reviewed.

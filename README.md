@@ -29,3 +29,7 @@ To update all submodules to the commits recorded in this repo:
 git pull --recurse-submodules
 git submodule update --init --recursive
 ```
+
+## Agent board
+
+Suggestion and bug cards live on a GitHub Projects board. Moving a card to **Todo** starts the `pickup-todo` [GitHub Agentic Workflow](https://github.github.com/gh-aw/). How to add cards and finish board setup: `.github/workflows/pickup-todo.md` and `.github/ISSUE_TEMPLATE/`.
