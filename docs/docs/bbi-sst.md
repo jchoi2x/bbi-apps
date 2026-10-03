@@ -182,7 +182,7 @@ API is VPC-linked. Ops routes (except ping/healthz, `/upload`, Slack) require `x
 | POST | `/api/workflows/legacy-parse/start` | Start legacy parse (one AccuZIP pass; staging schema `lp_<watchdogId>`) |
 | POST | `/api/workflows/address-validate/callback` | Ops `SendTaskSuccess` (not the production AccuZIP path) |
 
-Start bodies accept `startDate`/`endDate` or `reportDate`, plus `watchdogId`, `pendingOnly`, `storeNumbers`, `forceDownload`, etc. Response **202** `{ executionArn, watchdogId? }`. `POST /api/workflows/legacy-parse/start` takes `dryRun` (default true), `store_numbers`, and `reportStart`/`reportEnd` (`MM/DD/YYYY`). That start response is `{ executionArn, startDate }`; the watchdog id is created inside the run. A start while another legacy-parse execution is `RUNNING` returns **409** `{ error, executionArn }` and does not start a second run.
+Start bodies accept `startDate`/`endDate` or `reportDate`, plus `watchdogId`, `pendingOnly`, `storeNumbers`, `forceDownload`, etc. Response **202** `{ executionArn, watchdogId? }`. `POST /api/workflows/legacy-parse/start` takes `dryRun` (default true), `store_numbers`, and `reportStart`/`reportEnd` (`MM/DD/YYYY`). That start response is `{ executionArn, startDate }`; the watchdog id is created inside the run. A start while another legacy-parse execution is `RUNNING` returns **409** `{ error, executionArn }` and does not start a second run, unless the body includes `force: true` (also accepted on `/legacy-parse/resume`). `force` is HTTP-only and is not forwarded to the execution input.
 
 ### Runs (maps to Polling Status)
 

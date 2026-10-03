@@ -99,6 +99,21 @@ NFocus: S3 event → truncate/reload saturation tables. Independent of Pulse.
 
 ---
 
+## 5a. Parse-stage fixture harness (PHP ↔ SST)
+
+Campaign-table parse (`parseFiles.inc` stages 1–4 / SST `legacy-parse` Parse*) can be replayed from a fixed seed:
+
+| Side | Entry |
+| --- | --- |
+| PHP | `projects/bbi-cron-php/tests/parse/` — `docker compose up`, then `php tests/parse/run.php fixtures/<name>` |
+| SST | `bun test src/workflow/legacy-parse/parse-fixture.parity.test.ts` (loads the same fixture directory) |
+
+Fixture contract: `manifest.json` (week + store flags) + `seed.json` + AccuZIP `*_valid.txt` + `expected.json`. PHP injects `$beginning` / `$end` / `$parseNow` / `$storeArray` / sandbox mail paths into `parseFiles.inc`. SST seeds `lp_<watchdogId>` and runs ParseNew → ParseLate → ParseMassMail → ScanLapsed with `dryRun: true`.
+
+This is separate from NLL report-procedure parity (`get_*_customers`). It asserts post-parse `NewCustomers` / `LateCustomers` / `MassMail` rows, not press-file output.
+
+---
+
 ## 5. New / Late / Lapsed rules (SST = PHP parity)
 
 Canonical SQL: `projects/bbi-sst/docs/queries/report_procedures.sql`.
