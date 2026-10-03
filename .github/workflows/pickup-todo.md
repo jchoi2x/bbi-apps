@@ -37,7 +37,7 @@ tools:
 safe-outputs:
   update-project:
     github-token: ${{ secrets.GH_AW_WRITE_PROJECT_TOKEN }}
-    project: https://github.com/users/jchoi2x/projects/<BBI_AGENT_BOARD>
+    project: https://github.com/users/jchoi2x/projects/2
     max: 2
     views:
       - name: Agent Board
