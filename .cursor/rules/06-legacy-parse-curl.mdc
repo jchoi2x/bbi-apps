@@ -35,7 +35,7 @@ console.log(await response.text());
 - `dryRun` defaults to true. True writes `"NewCustomers"`, `"LateCustomers"`, `"LapsedCustomers"`, and `"MassMail"` in `lp_<watchdogId>`. Pass `false` to write those tables in `public`.
 - `keepSchema` defaults to true. The run leaves `lp_<watchdogId>` in place when it finishes or fails. Pass `false` to drop that schema.
 - `store_numbers` is optional. Omit it to fan out every distinct `file_list` store. Keep ad-hoc runs to a short explicit list.
-- `reportStart` / `reportEnd` are `MM/DD/YYYY`. Omit both to use the last completed Sunday–Saturday Eastern week.
+- `reportStart` / `reportEnd` are `MM/DD/YYYY`. Omit both to use the last completed Sunday–Saturday Eastern week. Sunday `WeeklyLegacyParseCron` (`cron(0 16 ? * SUN *)` America/New_York, same clock as Apollo `polling.php`) starts the workflow that way. The cron is only live when EventBridge Scheduler has the schedule.
 - **202** body is `{ executionArn, startDate }`. The watchdog id is created inside GenerateStoreManifest.
 - **409** `{ error, executionArn }` means a legacy-parse execution is already `RUNNING`. The new start exits without starting another one. Pass `force: true` to skip that check (HTTP-only; not forwarded to the execution input).
 

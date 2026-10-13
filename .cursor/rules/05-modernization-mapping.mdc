@@ -21,7 +21,9 @@ Narrative: `projects/bbi-sst/docs/how-it-works.md`. Live code can differ from ea
 | `AddressValidateWorkflow` | `address-validate.workflow.ts` | stores with unvalidated addresses | extract/parse + 6-min wait |
 | `LegacyNllGenerateWorkflow` | NLL workflow | NLL providers | `generate_nll.php` |
 
-Daily cron (`sst.config.ts:297-307`): `DailyDownloadCron` `cron(0 1 * * ? *)` **America/New_York**, `chainNext: true` → download → ingest → address-validate → optional NLL. Download window is last completed week’s Sunday → yesterday ET. Chained NLL ignores that and uses last completed **Sunday 00:00:00 through Saturday 23:59:59 Eastern** (still that prior week on Sunday).
+Daily cron (`sst.config.ts`): `DailyDownloadCron` `cron(0 1 * * ? *)` **America/New_York**, `chainNext: true` → download → ingest. Download window is last completed week’s Sunday → yesterday ET.
+
+Sunday parse cron: `WeeklyLegacyParseCron` `cron(0 16 ? * SUN *)` **America/New_York** — same 16:00 ET as Apollo `polling.php`. Starts `LegacyParseWorkflow` (`dryRun: true`). Report window is last completed **Sunday 00:00:00 through Saturday 23:59:59 Eastern**. The CronV2 only fires if EventBridge Scheduler has that schedule for the stage.
 
 Progress: `polling_watchdog` + `daily_polling.status` (`downloading` → `ingested` → `address_validated` → `generating_nll` → `completed`/`failed`). Idempotency: `file_list` flags + insert-ignore UKs — **not** `polling_processes`.
 
