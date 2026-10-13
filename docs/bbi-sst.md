@@ -45,6 +45,8 @@ Cron: **`DailyDownloadCron`** — `cron(0 1 * * ? *)` **America/New_York**, `cha
 
 Date window: Sunday of the **last completed report week** through **yesterday** (ET). Example: if today is Monday 13 Jul 2026, start = 05 Jul, end = 12 Jul. `checkS3: true` skips tabs already in the bucket.
 
+Weekly parse cron: **`WeeklyLegacyParseCron`** — `cron(0 16 ? * SUN *)` **America/New_York** (Sunday 16:00 ET, same clock as Apollo `polling.php`). Starts `LegacyParseWorkflow` with `dryRun: true`. Omitting dates uses the last completed Sunday–Saturday Eastern week. This CronV2 is only live when EventBridge Scheduler has the schedule for that stage.
+
 ```
 1:00 AM ET
   DownloadFileWorkflow

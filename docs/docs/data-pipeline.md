@@ -49,6 +49,8 @@ $end = strtotime("next saturday 11:59:59 pm", $beginning);
 
 ## 3. SST daily chain
 
+Sunday 16:00 ET `WeeklyLegacyParseCron` (`cron(0 16 ? * SUN *)` America/New_York) starts `LegacyParseWorkflow` — same clock as Apollo `polling.php`. Window = last completed Sunday–Saturday Eastern week. Only fires if EventBridge has that schedule.
+
 ```
 1:00 AM ET DailyDownloadCron (chainNext: true)
   window = last completed report-week Sunday → yesterday ET
